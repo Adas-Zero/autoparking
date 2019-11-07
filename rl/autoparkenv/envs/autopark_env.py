@@ -94,46 +94,39 @@ class Car_Agent():
 
     # 실제 행동 수행 0 - 전진 , 1 - 좌향  2 - 우향
     def aaction(self, action_num, statexy):
-
         self.pv_rp = self.rp.copy()
         self.pv_Occupied = self.Occupied.copy()
+        # 회전
+        self.Occupied = rot_convert(self.Occupied, self.action_w[action_num])
+        # 방향 벡터 회전
+        self.w += self.action_w[action_num]
 
         # 전진기어
         if self.gear == 0:
-
-            # 회전
-            self.Occupied = rot_convert(self.Occupied, self.action_w[action_num])
-
-
-            # 방향 벡터 회전
-            self.w += self.action_w[action_num]
-
             # 기준점 이동
-
             self.rp[0] = self.rp[0] + round(math.cos(self.w) * self.step)
             self.rp[1] = self.rp[1] + round(math.sin(self.w) * self.step)
-
+            if action_num == 3 or action_num == 1:
+                action_num = 4 - action_num
+            for i in range(len(statexy)):
+                statexy[i][0] = statexy[i][0] + round(math.sin(self.w) * self.step)
+                statexy[i][1] = statexy[i][1] + round(math.cos(self.w) * self.step)
 
         # 후진기어
         else:
-            # 회전
-            self.Occupied = rot_convert(self.Occupied, self.action_w[action_num])
-
-
-            # 방향 벡터 회전
-            self.w += self.action_w[action_num]
-
             # 기준점 이동
-
             self.rp[0] = self.rp[0] - int(math.cos(self.w - self.action_w[action_num]) * self.step)
             self.rp[1] = self.rp[1] - int(math.sin(self.w - self.action_w[action_num]) * self.step)
-
+            if action_num == 3 or action_num == 1:
+                action_num = 4 - action_num
+            for i in range(len(statexy)):
+                statexy[i][0] = statexy[i][0] - int(math.sin(self.w - self.action_w[action_num]) * self.step)
+                statexy[i][1] = statexy[i][1] - int(math.cos(self.w - self.action_w[action_num]) * self.step)
 
 
         print(" 현재 기어 :" , self.gear , " 현재 방향각 : " , self.w * 180 / math.pi)
         self.update_map()
-        if action_num == 3 or action_num == 1:
-            action_num = 4 - action_num
+
         statexy = rot_convert(statexy,self.action_w[action_num])
         return np.array(statexy,dtype=int)
 
