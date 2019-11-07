@@ -93,10 +93,10 @@ class Car_Agent():
             map[y][x] = 4
 
     # 실제 행동 수행 0 - 전진 , 1 - 좌향  2 - 우향
-    def aaction(self, action_num, state):
+    def aaction(self, action_num, statexy):
 
-        self.pv_rp = self.rp
-        self.pv_Occupied = self.Occupied
+        self.pv_rp = self.rp.copy()
+        self.pv_Occupied = self.Occupied.copy()
 
         # 전진기어
         if self.gear == 0:
@@ -132,8 +132,10 @@ class Car_Agent():
 
         print(" 현재 기어 :" , self.gear , " 현재 방향각 : " , self.w * 180 / math.pi)
         self.update_map()
-        state = rot_convert(state, self.action_w[action_num])
-        return np.array(state,dtype=int)
+        if action_num == 3 or action_num == 1:
+            action_num = 4 - action_num
+        statexy = rot_convert(statexy,self.action_w[action_num])
+        return np.array(statexy,dtype=int)
 
     # AVM 형태 로 데이터 받아들이기
     def AVM_cognition(self,avmxy):
@@ -157,6 +159,7 @@ class Car_Agent():
 class AutoParkEnv(gym.Env):
     metadata = {'render.modes': ['human']}
     def __init__(self):
+
         self.car = Car_Agent()
         self.statexy = self.car.AVM_xy()
         self.state = self.car.AVM_cognition(self.statexy)
@@ -179,7 +182,7 @@ class AutoParkEnv(gym.Env):
         self.canvas.bind("<Up>", lambda _: self.step(0))
         self.canvas.bind("<Left>", lambda _: self.step(3))
         self.canvas.bind("<Right>", lambda _: self.step(1))
-        self.canvas.bind("<Down>", lambda _: self.change_gear())
+        self.canvas.bind("<Down>", lambda _: self.step(4))
 
         self.rect_Occupied = []
 
@@ -192,10 +195,13 @@ class AutoParkEnv(gym.Env):
 
 
     def step(self, action):
-        self.statexy = self.car.aaction(action,self.statexy)
-        self.state = self.car.AVM_cognition(self.statexy)
-        self.DrawMap()
-        print(self.car.rp)
+        if action == 4:
+            self.change_gear()
+        else:
+            self.statexy = self.car.aaction(action,self.statexy)
+            self.state = self.car.AVM_cognition(self.statexy)
+            self.DrawMap()
+            print(self.car.rp)
         # done 결정
 #         if(차선에 닿음 감지 or 주차 완료)
 #             done = True
@@ -211,7 +217,8 @@ class AutoParkEnv(gym.Env):
 
 
     def reset(self):
-
+        global map
+        global Ori_map
         self.car = Car_Agent()
 
         map = [[0] * WIDTH * UNIT for _ in range(HEIGHT*UNIT)]
@@ -241,6 +248,7 @@ class AutoParkEnv(gym.Env):
 
         self.statexy = self.car.AVM_xy()
         self.state = self.car.AVM_cognition(self.statexy)
+        self.DrawMap()
 
     def render(self, modes='human', close=False):
         if self.isOpened == False:
@@ -275,7 +283,6 @@ class AutoParkEnv(gym.Env):
 
 # Visualization 관련 함수
     def DrawMap(self):
-        print(self.state.shape)
         for x in range(80):
             for y in range(120):
 
