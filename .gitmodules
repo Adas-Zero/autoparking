@@ -1,0 +1,3 @@
+[submodule "env/buildOpenCVXavier"]
+	path = env/buildOpenCVXavier
+	url = https://github.com/jetsonhacks/buildOpenCVXavier
