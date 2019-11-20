@@ -1,3 +1,6 @@
 [submodule "env/buildOpenCVXavier"]
 	path = env/buildOpenCVXavier
 	url = https://github.com/jetsonhacks/buildOpenCVXavier
+[submodule "DMPR-PS"]
+	path = DMPR-PS
+	url = https://github.com/Teoge/DMPR-PS.git
