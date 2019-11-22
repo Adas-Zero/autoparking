@@ -1,0 +1,3 @@
+/home/nvidia/autoparking/cpp2py/TT/CMakeFiles/rebuild_cache.dir
+/home/nvidia/autoparking/cpp2py/TT/CMakeFiles/Tutorial.dir
+/home/nvidia/autoparking/cpp2py/TT/CMakeFiles/edit_cache.dir

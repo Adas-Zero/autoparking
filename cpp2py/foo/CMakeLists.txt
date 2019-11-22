@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 2.8)
+project( foo )
+find_package( OpenCV REQUIRED )
+add_library( foo SHARED foo.cpp)  
+target_link_libraries( foo ${OpenCV_LIBS} )

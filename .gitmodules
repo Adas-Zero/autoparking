@@ -4,3 +4,6 @@
 [submodule "DMPR-PS"]
 	path = DMPR-PS
 	url = https://github.com/Teoge/DMPR-PS.git
+[submodule "cpp2py/spam"]
+	path = cpp2py/spam
+	url = https://github.com/jalan/spam.git
