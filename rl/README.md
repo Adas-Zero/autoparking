@@ -28,6 +28,7 @@ reward -= frame *0.001 (빠른 경로에 가산점 주기 위함)
 벽, 차선 충돌 시 reward -= 10 (*고정값으로 주면 주차칸 근처에서 죽었을 때랑 벽에서 죽었을 때 차이 X)  
   
 #### DQN  
+pytorch로 구현  
 Replay Memory 사용해 Transition을 저장  
 일반적인 Fully connected network로 구성 -> 추후 개선 필요  
 
