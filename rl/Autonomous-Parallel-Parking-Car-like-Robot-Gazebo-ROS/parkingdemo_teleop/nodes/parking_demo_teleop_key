@@ -1,0 +1,542 @@
+#!/usr/bin/env python2
+
+# Copyright (c) 2011, Willow Garage, Inc.
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+#    * Redistributions of source code must retain the above copyright
+#      notice, this list of conditions and the following disclaimer.
+#    * Redistributions in binary form must reproduce the above copyright
+#      notice, this list of conditions and the following disclaimer in the
+#      documentation and/or other materials provided with the distribution.
+#    * Neither the name of the Willow Garage, Inc. nor the names of its
+#      contributors may be used to endorse or promote products derived from
+#       this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+
+import rospy
+from geometry_msgs.msg import Twist
+from std_msgs.msg import Float64
+from nav_msgs.msg import Odometry
+from std_msgs.msg import String
+from gazebo_msgs.msg import ModelState
+from gazebo_msgs.srv import SetModelState
+import sys, select, os
+import gym
+import numpy as np
+import random
+import math
+import matplotlib
+import matplotlib.pyplot as plt
+from collections import namedtuple
+from itertools import count
+from std_srvs.srv import Empty
+from time import sleep
+
+import pdb
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import torch.nn.functional as F
+import torchvision.transforms as T
+
+
+if os.name == 'nt':
+    import msvcrt
+else:
+    import tty, termios
+
+OUTPUT_PATH = "./trained_network.pth"
+# Control Status
+LEFTFORWARD = 0
+CENTERFORWARD = 1
+RIGHTFORWARD = 2
+LEFTBACKWARD = 3
+CENTERBACKWARD = 4
+RIGHTBACKWARD = 5
+
+HIGH_VEL = 0.015
+TH_VEL = 0.001
+MAX_STEER = 0.3
+POWER_AC = 1500
+CONTROL_AC = 100
+lamda = 15
+WALL_X = 5.8
+WALL_Y_min = 0.5
+WALL_Y_MAX = 15
+# vel
+history_x = []
+history_y = []
+delta_dist = [0]
+
+# robot direction
+dirc = [0,0]
+STEER = [0]
+
+vel = [0,0]
+act = 0
+BASE_X = -2.805
+BASE_Y = 0.5
+
+
+
+msg = """
+Control Your TurtleBot3!
+-------------------------
+Moving around:
+        w
+   a    s    d
+        x
+
+w/s : increase/decrease REAR Wheel_effort 
+a/d : increase/decrease FRONT Steer 
+
+space key, X : force stop
+
+CTRL-C to quit
+"""
+
+e = """
+Communications Failed
+"""
+
+
+
+def getKey():
+    if os.name == 'nt':
+        return msvcrt.getch()
+
+    tty.setraw(sys.stdin.fileno())
+    rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
+    if rlist:
+        key = sys.stdin.read(1)
+    else:
+        key = ''
+
+    termios.tcsetattr(sys.stdin, termios.TCSADRAIN, settings)
+    return key
+def udist(c1,c2):
+    return ((c1[1]-c2[1])**2 + (c2[0]-c1[0])**2)
+# def dist(c1,c2,p):
+#     return ((c1[1]-c2[1])*p[0] + (c2[0]-c1[0])*p[1] + c1[0]*c2[1]-c2[0]*c1[1]) / (((c1[1]-c2[1])**2 + (c2[0]-c1[0])**2)**0.5)
+
+class AutoParkEnv(gym.Env):
+    metadata = {'render.modes': ['human']}
+
+    def __init__(self):
+        # status = 0 ~ stop  ,  status = 1 ~ run
+
+        self.carPos = [[0,0],[0,0],[0,0],[0,0]]  # fl, fr, bl, br
+        self.slotPos = [[0,5.5575],[0,2.9025],[-2.44,5.5575],[-2.44,2.9025]]  # sfl, sfr, sbl, sbr
+        self.status = 0
+        self.steer = 0
+        self.wheel_effort = 0
+        self.vel = 0
+        self.carSizex = 0
+        self.carSizey = 0
+
+    def step(self, action):
+        global act
+        if action == LEFTFORWARD:
+            self.steer = MAX_STEER
+            if(self.wheel_effort < CONTROL_AC):
+                self.wheel_effort += CONTROL_AC
+        elif action == CENTERFORWARD:
+            self.steer = 0
+            if(self.wheel_effort < CONTROL_AC):
+                self.wheel_effort += CONTROL_AC
+        elif action == RIGHTFORWARD:
+            self.steer = - MAX_STEER
+            if (self.wheel_effort < CONTROL_AC):
+                self.wheel_effort += CONTROL_AC
+        elif action == LEFTBACKWARD:
+            self.steer = MAX_STEER
+            if (self.wheel_effort > -CONTROL_AC):
+                self.wheel_effort -= CONTROL_AC
+        elif action == CENTERBACKWARD:
+            self.steer = 0
+            if (self.wheel_effort > -CONTROL_AC):
+                self.wheel_effort -= CONTROL_AC
+        elif action == RIGHTBACKWARD:
+            self.steer = - MAX_STEER
+            if (self.wheel_effort > -CONTROL_AC):
+                self.wheel_effort -= CONTROL_AC
+        act = action
+        self.status += 1
+        #print(self.wheel_effort)
+        fr_pub.publish(self.steer)
+        fl_pub.publish(self.steer)
+        rr_pub.publish(self.wheel_effort)
+        rl_pub.publish(self.wheel_effort)
+        sleep(0.05)
+        state = np.array([self.carPos, self.slotPos,self.wheel_effort,self.steer,self.status])
+        r = 0
+        for i in range(4):
+            r += udist(self.carPos[i],self.slotPos[i])/16
+        reward = - 16*math.log(r) - self.status*0.001
+        print(reward)
+        done = False
+
+        # wall check
+        for i in range(4):
+            if self.carPos[i][0] > WALL_X \
+                    or self.carPos[i][1] > WALL_Y_MAX or self.carPos[i][1] < WALL_Y_min:
+                # point.x > wall or point.y < wall or y> wall
+                done = True
+                reward -=50
+
+        # point check
+        # slot is upside
+        # for i in range(4):
+        #     if self.carPos[i][1] < self.slotPos[0][1]:  # point.y is upside to slot fl
+        #         if self.carPos[i][0] < self.slotPos[1][0] or self.carPos[i][0] > self.slotPos[0][0] or self.carPos[i][1] < self.slotPos[2][1]:
+        #             # px < r or px > l or py < sbl
+        #             #done = True
+        #             print("done")
+        #             reward = -1
+        # slot is leftside
+        for i in range(4):
+            if self.carPos[i][0] < self.slotPos[0][0]-0.2:  # point.x is leftside to slot fl
+                if self.carPos[i][1] < self.slotPos[1][1]-0.3 or self.carPos[i][1] > self.slotPos[0][1]+0.3 or self.carPos[i][0] < self.slotPos[2][0]:
+                    # py < fr or py > fl or px < sbl
+                    done = True
+                    reward -=50
+
+        # line check
+        # for i in range(4):
+        #     if dist(self.carPos[0], self.carPos[1], self.slotPos[i]) + dist(self.carPos[2], self.carPos[3],
+        #                                                                     self.slotPos[i]) <= self.carSizey:
+        #         #done = True
+        #         print(dist(self.carPos[0], self.carPos[1], self.slotPos[i]))
+        #         print(dist(self.carPos[2], self.carPos[3],self.slotPos[i]))
+        #         print("line1")
+        #         reward = -1
+        #     elif dist(self.carPos[0], self.carPos[2], self.slotPos[i]) + dist(self.carPos[1], self.carPos[3],
+        #                                                                       self.slotPos[i]) <= self.carSizex:
+        #         #done = True
+        #         print(dist(self.carPos[0], self.carPos[2], self.slotPos[i]))
+        #         print(dist(self.carPos[1], self.carPos[3], self.slotPos[i]))
+        #         print("line2")
+        #         reward = -1
+
+        return state, reward, done, {}
+
+    def reset(self):
+        self.status = 0
+        self.steer = 0
+        self.wheel_effort = 0
+        self.carPos = [[0,10],[0,10],[0,10],[0,10]]
+        self.slotPos = [[2.44,5.3575],[2.44,3.1025],[-2.44,5.3575],[-2.44,3.1025]]  # sfl, sfr, sbl, sbr
+        for i in range(4):
+            self.slotPos[i][0] += BASE_X
+            self.slotPos[i][1] += BASE_Y
+        self.carSizex = 1.9
+        self.carSizey = 4.6
+    def render(self, modes='human', close=False):
+        pass
+
+Transition = namedtuple('Transition',('state', 'action', 'next_state', 'reward'))
+
+class ReplayMemory(object):
+
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self.memory = []
+        self.position = 0
+
+    def push(self, *args):
+        if len(self.memory) < self.capacity:
+            self.memory.append(None)
+        self.memory[self.position] = Transition(*args)
+        self.position = (self.position + 1) % self.capacity
+
+    def sample(self, batch_size):
+        return random.sample(self.memory, batch_size)
+
+    def __len__(self):
+        return len(self.memory)
+
+#Q-Network
+class DQN(nn.Module):
+
+    def __init__(self):
+        super(DQN, self).__init__()
+        self.input_layer = nn.Linear(19,64)
+        self.hidden_layer = nn.Linear(64,32)
+        self.ouput_layer = nn.Linear(32,6)
+
+    def forward(self, x):
+        x = F.relu(self.input_layer(x))
+        x = F.relu(self.hidden_layer(x))
+        x = F.relu(self.ouput_layer(x))
+        return x
+BATCH_SIZE = 64
+GAMMA = 0.999
+EPS_START = 0.9
+EPS_END = 0.05
+EPS_DECAY = 200
+TARGET_UPDATE = 1
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+policy_net = DQN().to(device)
+target_net = DQN().to(device)
+target_net.load_state_dict(policy_net.state_dict())
+target_net.eval()
+
+optimizer = optim.RMSprop(policy_net.parameters())
+memory = ReplayMemory(10000)
+
+
+steps_done = 0
+env = AutoParkEnv()
+
+def convert_Quar_to_Euler(x, y, z, w):
+    pi = math.atan2(2 * (x * y + z * w), 1 - 2 * (y * y + z * z))
+    # theta = math.asin( 2*(x*z - w*y) )
+    # lamda = math.atan2( 2*(x*w + y*z), (1-2*(z*z+w*w)) )
+
+    return pi
+
+
+def save_odom(msg):
+    steer = 0
+    wheel_effort = 0.0
+    v = 0
+    rate = rospy.Rate(100)  # 100hz
+    PI = convert_Quar_to_Euler(msg.pose.pose.orientation.x, msg.pose.pose.orientation.y, msg.pose.pose.orientation.z,
+                               msg.pose.pose.orientation.w)
+    dirc[0] = math.cos(PI)
+    dirc[1] = math.sin(PI)
+
+    pos_x = msg.pose.pose.position.x - dirc[0]
+    pos_y = msg.pose.pose.position.y - dirc[1]
+    rcx = math.cos(PI-1.57)
+    rcy = math.sin(PI-1.57)
+    lcx = math.cos(PI+1.57)
+    lcy = math.sin(PI+1.57)
+    env.carPos[0] = [pos_x + env.carSizey*dirc[0] + env.carSizex/2*lcx,
+                     pos_y + env.carSizey*dirc[1] + env.carSizex/2*lcy]
+    env.carPos[1] = [pos_x + env.carSizey*dirc[0] + env.carSizex/2*rcx,
+                     pos_y + env.carSizey*dirc[1] + env.carSizex/2*rcy]
+    env.carPos[2] = [pos_x + env.carSizex/2*lcx, pos_y + env.carSizex/2*lcy]
+    env.carPos[3] = [pos_x + env.carSizex/2*rcx, pos_y + env.carSizex/2*rcy]
+    # print(pos_x)
+    # print(pos_y)
+    # print(PI)
+    #print(env.carPos)
+    # pdb.set_trace()
+    # print(PI)
+    history_x.append(msg.pose.pose.position.x)
+    history_y.append(msg.pose.pose.position.y)
+
+    if len(history_x) > 1:
+        vel[0] = history_x[-1] - history_x[-2]
+        vel[1] = history_y[-1] - history_y[-2]
+        v = math.sqrt(vel[0] * vel[0] + vel[1] * vel[1])
+        delta_dist.append(v)
+    else:
+        vel[0] = history_x[0]
+        vel[1] = history_y[0]
+    if act == LEFTFORWARD or act == CENTERFORWARD or act == RIGHTFORWARD:
+        #print("1st : {}, 2nd : {} , 3rd : {}".format(HIGH_VEL, HIGH_VEL - v, (HIGH_VEL - v) / HIGH_VEL))
+        env.wheel_effort = (HIGH_VEL - v) / HIGH_VEL * POWER_AC
+    elif act == LEFTBACKWARD or act == CENTERBACKWARD or act == RIGHTBACKWARD:
+        env.wheel_effort = -(HIGH_VEL - v) / HIGH_VEL * POWER_AC
+    rr_pub.publish(wheel_effort)
+    rl_pub.publish(wheel_effort)
+    if act == LEFTFORWARD or act == LEFTBACKWARD:
+        steer = MAX_STEER
+        fr_pub.publish(steer)
+        fl_pub.publish(steer)
+    elif act == RIGHTFORWARD or act ==RIGHTBACKWARD:
+        steer = -MAX_STEER
+        fr_pub.publish(steer)
+        fl_pub.publish(steer)
+        #print("Steer", steer)
+    elif act == CENTERFORWARD or act==CENTERBACKWARD:
+        steer = 0
+        fr_pub.publish(steer)
+        fl_pub.publish(steer)
+        #print("Steer", steer)
+    # elif key == '2':
+    #     steer = 0
+    #     fr_pub.publish(steer)
+    #     fl_pub.publish(steer)
+    #     #print("Steer", steer)
+
+    # elif key == '':
+    #     flag = vel[0] * dirc[0] + vel[1] * dirc
+    #     if flag > 0:
+    #         env.wheel_effort = (0 - v) * lamda * POWER_AC
+    #     else:
+    #         env.wheel_effort = (v - 0) * lamda * POWER_AC
+    #print("wheel_effort : {} , vel : {}".format(wheel_effort, v))
+    # pub
+
+
+
+
+def select_action(state):
+    global steps_done
+    #pdb.set_trace()
+    sample = random.random()
+    eps_threshold = EPS_END + (EPS_START - EPS_END) * \
+        math.exp(-1. * steps_done / EPS_DECAY)
+    steps_done += 1
+    if sample > eps_threshold:
+        print('t')
+        with torch.no_grad():
+            if(policy_net(state).max(1)[1].view(1, 1) == policy_net(state).min(1)[1].view(1, 1)):
+                print('ttttt')
+                return torch.tensor([[random.randrange(0,6)]], device=device, dtype=torch.long)
+            return policy_net(state).max(1)[1].view(1, 1)
+    else:
+        print('f')
+        return torch.tensor([[random.randrange(0,6)]], device=device, dtype=torch.long)
+episode_durations = []
+
+
+# def plot_durations():
+#     plt.figure(2)
+#     plt.clf()
+#     durations_t = torch.tensor(episode_durations, dtype=torch.float)
+#     plt.title('Training...')
+#     plt.xlabel('Episode')
+#     plt.ylabel('Duration')
+#     #plt.plot(durations_t.numpy())
+#     if len(durations_t) >= 100:
+#         means = durations_t.unfold(0, 100, 1).mean(1).view(-1)
+#         means = torch.cat((torch.zeros(99), means))
+#         #plt.plot(means.numpy())
+#
+#     #plt.pause(0.001)
+
+def optimize_model():
+    if len(memory) < BATCH_SIZE:
+        return
+    transitions = memory.sample(BATCH_SIZE)
+    batch = Transition(*zip(*transitions))
+    #pdb.set_trace()
+
+    non_final_mask = torch.tensor(tuple(map(lambda s: s is not None, batch.next_state)), device=device, dtype=torch.uint8)
+    non_final_next_states = torch.cat([s for s in batch.next_state if s is not None])
+    state_batch = torch.cat(batch.state)
+    action_batch = torch.cat(batch.action)
+    reward_batch = torch.cat(batch.reward)
+    state_action_values = policy_net(state_batch).gather(1, action_batch)
+    next_state_values = torch.zeros(BATCH_SIZE, device=device)
+    next_state_values[non_final_mask] = target_net(non_final_next_states).max(1)[0].detach()
+    expected_state_action_values = (next_state_values * GAMMA) + reward_batch
+
+    loss = F.smooth_l1_loss(state_action_values, expected_state_action_values.unsqueeze(1))
+
+    optimizer.zero_grad()
+    loss.backward()
+    for param in policy_net.parameters():
+        param.grad.data.clamp_(-1, 1)
+    optimizer.step()
+
+
+
+rospy.init_node('parking_demo_teleop')
+rospy.Subscriber('ground_truth/state', Odometry, save_odom)
+reset_simulation = rospy.ServiceProxy('/gazebo/reset_simulation', Empty)
+if __name__ == "__main__":
+
+    if os.name != 'nt':
+        settings = termios.tcgetattr(sys.stdin)
+
+    # turtlebot3_model = rospy.get_param("model", "burger")
+
+    #rospy.Subscriber('ground_truth/state', Odometry, save)
+
+
+    fr_pub = rospy.Publisher('parkingdemo/fr_Steer_position_controller/command', Float64, queue_size=10)
+    fl_pub = rospy.Publisher('parkingdemo/fl_Steer_position_controller/command', Float64, queue_size=10)
+    rr_pub = rospy.Publisher('parkingdemo/rr_Wheel_effort_controller/command', Float64, queue_size=10)
+    rl_pub = rospy.Publisher('parkingdemo/rl_Wheel_effort_controller/command', Float64, queue_size=10)
+    done = False
+
+    env.reset()
+    reset_simulation()
+    #try:
+    print(msg)
+    # while (1):
+    #     key = getKey()
+    #     if key == 'q':
+    #         state, reward, done, info = env.step(LEFTFORWARD)
+    #     elif key == 'w':
+    #         state, reward, done, info = env.step(CENTERFORWARD)
+    #     elif key == 'e':
+    #         state, reward, done, info = env.step(RIGHTFORWARD)
+    #     elif key == 'a':
+    #         state, reward, done, info = env.step(LEFTBACKWARD)
+    #     elif key == 's':
+    #         state, reward, done, info = env.step(CENTERBACKWARD)
+    #     elif key == 'd':
+    #         state, reward, done, info = env.step(RIGHTBACKWARD)
+    #     elif key == 'x':
+    #         done = True
+    #     if done:
+    #         env.reset()
+    #         reset_simulation()
+    #         #break
+
+    # learning
+
+    num_episodes = 50000
+    for i_episode in range(num_episodes):
+        # Initialize the environment and state
+        env.reset()
+        reset_simulation()
+        done = False
+        #pdb.set_trace()
+        print("episode:")
+        print(i_episode)
+        for t in count():
+            list = sum(env.carPos + env.slotPos,[])
+            list += [env.wheel_effort, env.steer, env.status]
+            state = torch.reshape(torch.tensor(list),(1,19))
+            action = select_action(state)
+            #pdb.set_trace()
+            selected_action = action.item()
+            _, reward, done, _ = env.step(selected_action)
+            print(selected_action)
+            reward = torch.tensor([reward],dtype= torch.float, device=device)
+            if not done:
+                list = sum(env.carPos + env.slotPos, [])
+                list += [env.wheel_effort, env.steer, env.status]
+                next_state = torch.reshape(torch.tensor(list),(1,19))
+            else:
+                next_state = None
+            memory.push(state, action, next_state, reward)
+            state = next_state
+            optimize_model()
+            if done:
+                episode_durations.append(t + 1)
+                #plot_durations()
+                break
+        if i_episode % TARGET_UPDATE == 0:
+            target_net.load_state_dict(policy_net.state_dict())
+        torch.save(policy_net.state_dict(), OUTPUT_PATH)
+    # except Exception as ex:
+    #     print("WTF ERROR!")
+    #     print(ex)
+    #
+    # finally:
+    #     print("final")
+
+    if os.name != 'nt':
+        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, settings)

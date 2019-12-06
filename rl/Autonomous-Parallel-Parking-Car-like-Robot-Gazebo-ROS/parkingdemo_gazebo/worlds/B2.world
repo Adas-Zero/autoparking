@@ -1,0 +1,140 @@
+<?xml version="1.0" ?>
+<sdf version="1.5">
+  <world name="default">
+    <scene>
+      <grid>true</grid>
+    </scene>
+   
+    <!-- Invisible ground plane -->
+    <model name="ground">
+      <link name="body">
+        <collision name="geom">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+	      <size>100 100</size>
+            </plane>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>100</mu>
+                <mu2>100</mu2>
+              </ode>
+            </friction>
+          </surface>
+        </collision>
+
+        <velocity_decay>
+          <linear>0</linear>
+          <angular>0</angular>
+        </velocity_decay>
+        <self_collide>0</self_collide>
+        <kinematic>0</kinematic>
+        <gravity>1</gravity>
+
+      </link>
+      <static>false</static>
+    </model>
+
+  <include>
+    <uri>model://parkingline</uri>
+    <pose>-2.805 0.5 0 0 0 0</pose>
+    <name>parking_line</name>
+  </include>
+
+
+ <model name = "parking_space">
+    <static> true </static>
+    <pose> 0 0 0 0 0 0 </pose>
+
+       <link name = "left_wall">
+       <pose>-5.94 8.735 0 0 0 0  </pose>
+        <collision name="geom2">
+          <geometry>
+            <box>
+		  <size> 0.5 16.47 1</size>
+            </box>
+	    </geometry>
+        </collision>
+        <visual name="geom3">
+          <geometry>
+            <box>
+		  <size> 0.5 16.47 1</size>
+            </box>
+          </geometry>
+	    <material>
+	     <ambient>0 0 0 0  </ambient>
+	    </material> 
+        </visual>
+      </link>
+
+       <link name = "right_wall">
+       <pose>5.94 8.735 0 0 0 0  </pose>
+        <collision name="geom2">
+          <geometry>
+            <box>
+		  <size> 0.5 16.47 1</size>
+            </box>
+	    </geometry>
+        </collision>
+        <visual name="geom3">
+          <geometry>
+            <box>
+		  <size> 0.5 16.47 1</size>
+            </box>
+          </geometry>
+	    <material>
+	     <ambient>0 0 0 0  </ambient>
+	    </material> 
+        </visual>
+      </link>
+
+       <link name = "down_wall">
+       <pose>0 0.25 0 0 0 0  </pose>
+        <collision name="geom2">
+          <geometry>
+            <box>
+		  <size> 12.38 0.5 1</size>
+            </box>
+	    </geometry>
+        </collision>
+        <visual name="geom3">
+          <geometry>
+            <box>
+		  <size> 12.38 0.5 1</size>
+            </box>
+          </geometry>
+	    <material>
+	     <ambient>0 0 0 0  </ambient>
+	    </material> 
+        </visual>
+      </link>
+
+       <link name = "upper_wall">
+       <pose>0 17.22 0 0 0 0  </pose>
+        <collision name="geom2">
+          <geometry>
+            <box>
+		  <size> 12.38 0.5 1</size>
+            </box>
+	    </geometry>
+        </collision>
+        <visual name="geom3">
+          <geometry>
+            <box>
+		  <size> 12.38 0.5 1</size>
+            </box>
+          </geometry>
+	    <material>
+	     <ambient>0 0 0 0  </ambient>
+	    </material> 
+        </visual>
+      </link>
+</model>
+
+
+ </world>
+</sdf>
+
+
